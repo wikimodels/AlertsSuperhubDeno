@@ -2,9 +2,8 @@
 // deno-lint-ignore-file no-explicit-any
 
 /**
- * Этот файл определяет API-маршруты (контроллеры) для CRUD-операций
- * с 'working-coins'. Он использует Hono в качестве роутера.
- * Он ОЖИДАЕТ, что 'WorkingCoinStorage' будет передан в 'c.var.storage'.
+ * API-маршруты для CRUD-операций с 'working-coins'
+ * Все роуты начинаются с /coins/working для соответствия Angular environment
  */
 import { Hono } from "npm:hono";
 
@@ -13,7 +12,6 @@ import { logger } from "../utils/logger.ts";
 import { DColors } from "../models/types.ts";
 import { WorkingCoinStorage } from "../working-coin-manager/working-coin-storage.ts";
 
-// Определяем тип Hono, чтобы он знал о 'storage' в контексте
 type HonoApp = {
   Variables: {
     storage: WorkingCoinStorage;
@@ -22,22 +20,34 @@ type HonoApp = {
 
 export const coinRoutes = new Hono<HonoApp>();
 
-// --- 1. GET /coins ---
-// (Получить все монеты)
-coinRoutes.get("/coins", async (c) => {
+// ============================================
+// 📥 GET - Получение монет
+// ============================================
+
+/**
+ * GET /coins/working
+ * Получить все монеты
+ */
+coinRoutes.get("/coins/working", async (c) => {
   const storage = c.var.storage;
   try {
     const coins = await storage.getAllCoins();
     return c.json({ success: true, count: coins.length, data: coins });
   } catch (e: any) {
-    logger.error("[API /coins] " + e.message, e);
+    logger.error("[API /coins/working] " + e.message, e);
     return c.json({ success: false, error: e.message }, 500);
   }
 });
 
-// --- 2. POST /coins ---
-// (Добавить одну монету)
-coinRoutes.post("/coins", async (c) => {
+// ============================================
+// ➕ POST - Добавление монет
+// ============================================
+
+/**
+ * POST /coins/working
+ * Добавить одну монету
+ */
+coinRoutes.post("/coins/working", async (c) => {
   const storage = c.var.storage;
   try {
     const coin = (await c.req.json()) as WorkingCoin;
@@ -51,16 +61,29 @@ coinRoutes.post("/coins", async (c) => {
       );
     }
     const success = await storage.addCoin(coin);
-    return c.json({ success: success, symbol: coin.symbol });
+
+    if (!success) {
+      return c.json(
+        {
+          success: false,
+          error: `Coin ${coin.symbol} already exists.`,
+        },
+        409
+      );
+    }
+
+    return c.json({ success: true, symbol: coin.symbol });
   } catch (e: any) {
-    logger.error("[API /coins] " + e.message, e);
+    logger.error("[API /coins/working] " + e.message, e);
     return c.json({ success: false, error: e.message }, 500);
   }
 });
 
-// --- 3. POST /coins/batch ---
-// (Добавить массив монет)
-coinRoutes.post("/coins/batch", async (c) => {
+/**
+ * POST /coins/working/batch
+ * Добавить массив монет
+ */
+coinRoutes.post("/coins/working/batch", async (c) => {
   const storage = c.var.storage;
   try {
     const coins = (await c.req.json()) as WorkingCoin[];
@@ -76,34 +99,40 @@ coinRoutes.post("/coins/batch", async (c) => {
     const success = await storage.addCoins(coins);
     return c.json({ success: success, count: coins.length });
   } catch (e: any) {
-    logger.error("[API /coins/batch] " + e.message, e);
+    logger.error("[API /coins/working/batch] " + e.message, e);
     return c.json({ success: false, error: e.message }, 500);
   }
 });
 
-// --- 🔥 КРИТИЧЕСКИ ВАЖНО: /coins/all ДОЛЖЕН БЫТЬ ПЕРЕД /coins/:symbol ---
-// Иначе Hono воспримет "all" как параметр :symbol!
+// ============================================
+// ❌ DELETE - Удаление монет
+// ============================================
+// 🔥 ВАЖНО: /all ДОЛЖЕН БЫТЬ ПЕРЕД /:symbol
 
-// --- 4. DELETE /coins/all ---
-// (Удалить ВСЕ монеты)
-coinRoutes.delete("/coins/all", async (c) => {
+/**
+ * DELETE /coins/working/all
+ * Удалить ВСЕ монеты
+ */
+coinRoutes.delete("/coins/working/all", async (c) => {
   const storage = c.var.storage;
   try {
     const deletedCount = await storage.removeAllCoins();
     logger.info(
-      `[API /coins/all] All ${deletedCount} coins removed.`,
+      `[API /coins/working/all] All ${deletedCount} coins removed.`,
       DColors.yellow
     );
     return c.json({ success: true, deletedCount: deletedCount });
   } catch (e: any) {
-    logger.error("[API /coins/all] " + e.message, e);
+    logger.error("[API /coins/working/all] " + e.message, e);
     return c.json({ success: false, error: e.message }, 500);
   }
 });
 
-// --- 5. DELETE /coins/:symbol ---
-// (Удалить одну монету по символу)
-coinRoutes.delete("/coins/:symbol", async (c) => {
+/**
+ * DELETE /coins/working/:symbol
+ * Удалить одну монету по символу
+ */
+coinRoutes.delete("/coins/working/:symbol", async (c) => {
   const storage = c.var.storage;
   try {
     const symbol = c.req.param("symbol");
@@ -114,16 +143,26 @@ coinRoutes.delete("/coins/:symbol", async (c) => {
       );
     }
     const success = await storage.removeCoin(symbol.toUpperCase());
-    return c.json({ success: success, symbol: symbol });
+
+    if (!success) {
+      return c.json(
+        { success: false, error: `Coin ${symbol} not found.` },
+        404
+      );
+    }
+
+    return c.json({ success: true, symbol: symbol });
   } catch (e: any) {
-    logger.error("[API /coins/:symbol] " + e.message, e);
+    logger.error("[API /coins/working/:symbol] " + e.message, e);
     return c.json({ success: false, error: e.message }, 500);
   }
 });
 
-// --- 6. POST /coins/delete-batch ---
-// (Удалить массив монет по символам)
-coinRoutes.post("/coins/delete-batch", async (c) => {
+/**
+ * POST /coins/working/delete-batch
+ * Удалить массив монет по символам
+ */
+coinRoutes.post("/coins/working/delete-batch", async (c) => {
   const storage = c.var.storage;
   try {
     const symbols = (await c.req.json()) as string[];
@@ -139,7 +178,7 @@ coinRoutes.post("/coins/delete-batch", async (c) => {
     const deletedCount = await storage.removeCoins(symbols);
     return c.json({ success: true, deletedCount: deletedCount });
   } catch (e: any) {
-    logger.error("[API /coins/delete-batch] " + e.message, e);
+    logger.error("[API /coins/working/delete-batch] " + e.message, e);
     return c.json({ success: false, error: e.message }, 500);
   }
 });

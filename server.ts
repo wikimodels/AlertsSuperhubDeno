@@ -1,4 +1,5 @@
 import { Hono } from "npm:hono";
+import { cors } from "npm:hono/cors";
 import { logger } from "./utils/logger.ts";
 import { DColors } from "./models/types.ts";
 
@@ -9,11 +10,15 @@ import { WorkingCoinStorage } from "./working-coin-manager/working-coin-storage.
 // --- 🚀 ИЗМЕНЕНИЕ: API для CRUD алертов ---
 import { alertRoutes } from "./routes/alerts-routes.ts";
 import { AlertStorage } from "./alert-manager/alert-storage.ts";
+
+// --- 🚀 ИЗМЕНЕНИЕ №3: API для Auth ---
+import { authRoutes } from "./routes/auth-routes.ts";
 // --- 🚀 КОНЕЦ ИЗМЕНЕНИЯ ---
 
 // --- Cron Job (1h) ---
 import { runJob } from "./utils/run-job.ts";
 import { run1hJob } from "./jobs/job-1h.ts";
+import { runCleanupJob } from "./jobs/job-cleanup.ts";
 
 // --- 🚀 ИЗМЕНЕНИЕ: Типизация Hono для ДВУХ storage ---
 type HonoApp = {
@@ -60,14 +65,63 @@ async function startServer() {
 
   // Настройка CRON Jobs
   logger.info("[CRON] Настройка Cron Job 1h (Alerts)...", DColors.cyan);
-
-  Deno.cron("Job 1h Alerts", "0 * * * *", () => {
+  Deno.cron("Job 1h Alerts", "*/3 * * * *", () => {
     // "0 * * * *" = в 00 минут каждого часа
     runJob("1h", run1hJob);
   });
 
+  Deno.cron("Job Cleanup Old Alerts", "0 0 * * *", async () => {
+    await runCleanupJob();
+  });
+
   // Настройка HTTP-сервера (Hono)
   const app = new Hono<HonoApp>();
+
+  // --- 🚀 CORS Middleware (Global) ---
+  app.use(
+    "*",
+    cors({
+      origin: (origin) => {
+        // В production укажите конкретные домены
+        // Например: ['https://yourdomain.com', 'https://app.yourdomain.com']
+
+        // Для development разрешаем localhost
+        const allowedOrigins = [
+          "http://localhost:4200", // Angular dev server
+          "http://localhost:3000", // Альтернативный порт
+          "http://127.0.0.1:4200",
+          "http://127.0.0.1:3000",
+        ];
+
+        // В production можно добавить продакшн домены
+        if (Deno.env.get("ENVIRONMENT") === "production") {
+          allowedOrigins.push(
+            "https://yourdomain.com",
+            "https://app.yourdomain.com"
+          );
+        }
+
+        // Проверяем, разрешен ли origin
+        if (allowedOrigins.includes(origin)) {
+          return origin;
+        }
+
+        // Для разработки можно разрешить все (небезопасно для production!)
+        // Раскомментируйте следующую строку только для development
+        // return origin;
+
+        // По умолчанию - первый разрешенный origin
+        return allowedOrigins[0];
+      },
+      allowHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      exposeHeaders: ["Content-Length", "X-Request-Id"],
+      maxAge: 600, // Preflight кэш на 10 минут
+      credentials: true, // Разрешаем отправку cookies/auth headers
+    })
+  );
+  logger.info("[SERVER] CORS middleware настроен.", DColors.green);
+  // --- 🚀 КОНЕЦ CORS ---
 
   // --- Middleware: Внедряем ОБА storage в контекст (singleton) ---
   app.use("/api/*", async (c, next) => {
@@ -85,17 +139,27 @@ async function startServer() {
   app.route("/api", alertRoutes);
   // --- 🚀 КОНЕЦ ИЗМЕНЕНИЯ ---
 
+  // --- 🚀 ИЗМЕНЕНИЕ №3: Подключаем authRoutes ---
+  app.route("/api", authRoutes);
+  // --- 🚀 КОНЕЦ ИЗМЕНЕНИЯ ---
+
   // Health Check
   app.get("/", (c) => {
-    return c.text("Alerts Superhub API is running!");
+    return c.json({
+      status: "ok",
+      message: "Alerts Superhub API is running!",
+      timestamp: new Date().toISOString(),
+      cors: "enabled",
+    });
   });
 
   // Запуск сервера
+  const PORT = Deno.env.get("PORT") || "8000";
   logger.info(
-    "[SERVER] HTTP-сервер запущен на http://localhost:8000",
+    `[SERVER] HTTP-сервер запущен на порту ${PORT}...`,
     DColors.green
   );
-  Deno.serve(app.fetch);
+  Deno.serve({ port: parseInt(PORT) }, app.fetch);
 }
 
 // Запускаем все

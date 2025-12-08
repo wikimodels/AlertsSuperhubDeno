@@ -43,6 +43,7 @@ export type FetchOptions = {
 export type Coin = {
   symbol: string;
   exchanges: string[];
+  category: number;
 };
 
 // Группы монет по биржам

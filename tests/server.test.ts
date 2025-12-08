@@ -3,7 +3,7 @@ import {
   assert,
   assertEquals,
 } from "https://deno.land/std@0.223.0/assert/mod.ts";
-import { WorkingCoin } from "./models/working-coin.ts";
+import { WorkingCoin } from "../models/working-coin.ts";
 
 const BASE_URL = "http://localhost:8000/api";
 

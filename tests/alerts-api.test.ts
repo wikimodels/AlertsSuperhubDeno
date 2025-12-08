@@ -2,7 +2,7 @@ import {
   assert,
   assertEquals,
 } from "https://deno.land/std@0.223.0/assert/mod.ts";
-import { LineAlert, VwapAlert } from "./models/alerts.ts";
+import { LineAlert, VwapAlert } from "../models/alerts.ts";
 
 const BASE_URL = "http://localhost:8000/api";
 let testAlertId1 = ""; // Будет установлен в Шаге 1

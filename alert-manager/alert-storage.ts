@@ -1,393 +1,382 @@
 // deno-lint-ignore-file no-explicit-any
 // src/alertManager/alertStorage.ts
 
-/**
- * Этот модуль предоставляет класс AlertStorage для управления алертами
- * в 6 коллекциях (working, triggered, archived).
- *
- * Он также включает CRUD-методы (по аналогии с WorkingCoinStorage)
- * для управления "working" алертами через API.
- */
 import { load } from "https://deno.land/std@0.223.0/dotenv/mod.ts";
-import { MongoClient, Db, Collection, Filter } from "npm:mongodb";
-import { LineAlert, VwapAlert, AlertsCollection } from "../models/alerts.ts";
+import { MongoClient, Db, Collection } from "npm:mongodb";
+import {
+  LineAlert,
+  VwapAlert,
+  AlertType,
+  AlertStatus,
+} from "../models/alerts.ts";
 import { logger } from "../utils/logger.ts";
 import { DColors } from "../models/types.ts";
 
-// --- Константы ---
 const env = await load();
 const MONGO_URL = env["MONGO_DB_URL"] ?? Deno.env.get("MONGO_DB_URL");
 const DB_NAME = "general";
 
-const LINE_ALERTS_WORKING_COL = "working-line-alerts";
-const LINE_ALERTS_TRIGGERED_COL = "triggered-line-alerts";
-const LINE_ALERTS_ARCHIVED_COL = "archived-line-alerts";
-const VWAP_ALERTS_WORKING_COL = "working-vwap-alerts";
-const VWAP_ALERTS_TRIGGERED_COL = "triggered-vwap-alerts";
-const VWAP_ALERTS_ARCHIVED_COL = "archived-vwap-alerts";
+const COLS = {
+  line: {
+    working: "working-line-alerts",
+    triggered: "triggered-line-alerts",
+    archived: "archived-line-alerts",
+  },
+  vwap: {
+    working: "working-vwap-alerts",
+    triggered: "triggered-vwap-alerts",
+    archived: "archived-vwap-alerts",
+  },
+};
+
+const ALLOWED_EMAILS_COL = "allowed-emails";
 
 export class AlertStorage {
   private client: MongoClient;
   private db: Db;
 
-  // --- 6 свойств коллекций ---
-  private lineWorkingCol: Collection<LineAlert>;
-  private lineTriggeredCol: Collection<LineAlert>;
-  private lineArchivedCol: Collection<LineAlert>;
-  private vwapWorkingCol: Collection<VwapAlert>;
-  private vwapTriggeredCol: Collection<VwapAlert>;
-  private vwapArchivedCol: Collection<VwapAlert>;
+  private collections: Record<string, Collection<any>> = {};
+  private allowedEmailsCol: Collection<any>;
 
   constructor() {
     if (!MONGO_URL) {
-      logger.error(
-        "Не найден 'MONGO_DB_URL' в .env. AlertStorage не может запуститься."
-      );
+      logger.error("Не найден 'MONGO_DB_URL' в .env.");
       throw new Error("MONGO_DB_URL не настроен.");
     }
     this.client = new MongoClient(MONGO_URL);
     this.db = this.client.db(DB_NAME);
 
-    // Инициализация 6 коллекций
-    this.lineWorkingCol = this.db.collection<LineAlert>(
-      LINE_ALERTS_WORKING_COL
+    // Init Collections
+    this.collections[`line_working`] = this.db.collection<LineAlert>(
+      COLS.line.working
     );
-    this.lineTriggeredCol = this.db.collection<LineAlert>(
-      LINE_ALERTS_TRIGGERED_COL
+    this.collections[`line_triggered`] = this.db.collection<LineAlert>(
+      COLS.line.triggered
     );
-    this.lineArchivedCol = this.db.collection<LineAlert>(
-      LINE_ALERTS_ARCHIVED_COL
+    this.collections[`line_archived`] = this.db.collection<LineAlert>(
+      COLS.line.archived
     );
-    this.vwapWorkingCol = this.db.collection<VwapAlert>(
-      VWAP_ALERTS_WORKING_COL
+
+    this.collections[`vwap_working`] = this.db.collection<VwapAlert>(
+      COLS.vwap.working
     );
-    this.vwapTriggeredCol = this.db.collection<VwapAlert>(
-      VWAP_ALERTS_TRIGGERED_COL
+    this.collections[`vwap_triggered`] = this.db.collection<VwapAlert>(
+      COLS.vwap.triggered
     );
-    this.vwapArchivedCol = this.db.collection<VwapAlert>(
-      VWAP_ALERTS_ARCHIVED_COL
+    this.collections[`vwap_archived`] = this.db.collection<VwapAlert>(
+      COLS.vwap.archived
     );
+
+    this.allowedEmailsCol = this.db.collection(ALLOWED_EMAILS_COL);
   }
 
-  /**
-   * Подключается к MongoDB.
-   */
   async connect(): Promise<void> {
     try {
       await this.client.connect();
-      logger.info("AlertStorage успешно подключен к MongoDB.", DColors.green);
+      logger.success(
+        "AlertStorage успешно подключен к MongoDB.",
+        DColors.green
+      );
     } catch (e) {
-      logger.error("AlertStorage: Не удалось подключиться к MongoDB:", e);
+      logger.error("AlertStorage: Не удалось подключиться к MongoDB", e);
       throw e;
     }
   }
 
-  /**
-   * Отключается от MongoDB.
-   */
   async disconnect(): Promise<void> {
     await this.client.close();
     logger.info("AlertStorage отключен от MongoDB.", DColors.gray);
   }
 
-  // --- Хелперы для выбора коллекции (для Checker) ---
-  private _getLineCollection(status: AlertsCollection): Collection<LineAlert> {
-    switch (status) {
-      case "working":
-        return this.lineWorkingCol;
-      case "triggered":
-        return this.lineTriggeredCol;
-      case "archived":
-        return this.lineArchivedCol;
-      default:
-        throw new Error(`Неизвестный статус LineAlert: ${status}`);
+  // --- Helper ---
+  private _getCollection(
+    type: AlertType,
+    status: AlertStatus
+  ): Collection<any> {
+    const key = `${type}_${status}`;
+    const col = this.collections[key];
+    if (!col) {
+      const msg = `Коллекция не найдена для: ${type} / ${status}`;
+      logger.error(msg);
+      throw new Error(msg);
     }
+    return col;
   }
 
-  private _getVwapCollection(status: AlertsCollection): Collection<VwapAlert> {
-    switch (status) {
-      case "working":
-        return this.vwapWorkingCol;
-      case "triggered":
-        return this.vwapTriggeredCol;
-      case "archived":
-        return this.vwapArchivedCol;
-      default:
-        throw new Error(`Неизвестный статус VwapAlert: ${status}`);
-    }
-  }
+  // --- CRUD ---
 
-  // --- МЕТОДЫ ДЛЯ ALERT-CHECKER (JOB-1H) ---
-  // (Эти методы используются джобом, не API)
-
-  async getLineAlerts(
-    status: AlertsCollection,
-    isActive = true
-  ): Promise<LineAlert[]> {
-    // ... (без изменений)
+  async getAlerts(
+    type: AlertType,
+    status: AlertStatus,
+    isActive?: boolean
+  ): Promise<any[]> {
     try {
-      const collection = this._getLineCollection(status);
-      const filter: Filter<LineAlert> = {
-        isActive: isActive,
-      };
-      return await collection.find(filter).toArray();
+      const col = this._getCollection(type, status);
+      const filter: any = {};
+      if (isActive !== undefined) filter.isActive = isActive;
+      return await col.find(filter).toArray();
     } catch (e: any) {
       logger.error(
-        `Не удалось получить Line Alerts (status=${status}): ${e.message}`,
+        `Ошибка при получении алертов (${type}/${status}): ${e.message}`,
         e
       );
       return [];
     }
   }
 
-  async addLineAlert(
-    status: AlertsCollection,
-    alert: LineAlert
-  ): Promise<boolean> {
-    // ... (без изменений, используется для 'triggered')
-    try {
-      const collection = this._getLineCollection(status);
-      await collection.insertOne(alert);
-      return true;
-    } catch (e: any) {
-      logger.error(
-        `Не удалось добавить Line Alert (id=${alert.id}) в ${status}: ${e.message}`,
-        e
-      );
-      return false;
-    }
-  }
-
-  // --- 🚀 НАЧАЛО ИСПРАВЛЕНИЯ (TS2339) ---
-
-  /**
-   * (Метод для checker) Получает VWAP алерты по статусу
-   */
-  async getVwapAlerts(
-    status: AlertsCollection,
-    isActive = true
-  ): Promise<VwapAlert[]> {
-    try {
-      const collection = this._getVwapCollection(status);
-      const filter: Filter<VwapAlert> = {
-        isActive: isActive,
-      };
-      return await collection.find(filter).toArray();
-    } catch (e: any) {
-      logger.error(
-        `Не удалось получить Vwap Alerts (status=${status}): ${e.message}`,
-        e
-      );
-      return [];
-    }
-  }
-
-  /**
-   * (Метод для checker) Добавляет VWAP алерт (обычно 'triggered')
-   */
-  async addVwapAlert(
-    status: AlertsCollection,
-    alert: VwapAlert
+  async addAlert(
+    type: AlertType,
+    status: AlertStatus,
+    alert: any
   ): Promise<boolean> {
     try {
-      const collection = this._getVwapCollection(status);
-      await collection.insertOne(alert);
-      return true;
-    } catch (e: any) {
-      logger.error(
-        `Не удалось добавить Vwap Alert (id=${alert.id}) в ${status}: ${e.message}`,
-        e
-      );
-      return false;
-    }
-  }
-
-  // --- 🚀 КОНЕЦ ИСПРАВЛЕНИЯ ---
-
-  // --- 🚀 НАЧАЛО: API CRUD (Working Alerts) ---
-  // (Этот код из вашего файла остается БЕЗ ИЗМЕНЕНИЙ)
-
-  // --- Line Alerts (CRUD) ---
-
-  async getWorkingLineAlerts(): Promise<LineAlert[]> {
-    return await this.lineWorkingCol.find().toArray();
-  }
-
-  async addWorkingLineAlert(alert: LineAlert): Promise<boolean> {
-    try {
-      // Алерт должен иметь 'id' (UUID), заданный клиентом
-      if (!alert.id) throw new Error("Alert 'id' (UUID) is required.");
-
-      const existing = await this.lineWorkingCol.findOne({ id: alert.id });
-      if (existing) {
-        logger.warn(
-          `[AlertStorage] Line Alert (id=${alert.id}) уже существует.`,
-          DColors.yellow
-        );
-        return false;
+      const col = this._getCollection(type, status);
+      if (status === "working" && alert.id) {
+        const existing = await col.findOne({ id: alert.id });
+        if (existing) {
+          logger.warn(
+            `Попытка добавить дубликат (${type}/${status}, id=${alert.id})`,
+            DColors.yellow
+          );
+          return false;
+        }
       }
-      await this.lineWorkingCol.insertOne(alert);
-      return true;
-    } catch (e: any) {
-      logger.error(
-        `Не удалось добавить Line Alert (id=${alert.id}): ${e.message}`,
-        e
+      await col.insertOne(alert);
+      logger.success(
+        `Добавлен алерт (${type}/${status}) Symbol: ${alert.symbol}`,
+        DColors.green
       );
-      return false;
-    }
-  }
-
-  async addWorkingLineAlerts(alerts: LineAlert[]): Promise<boolean> {
-    if (!alerts || alerts.length === 0) return true;
-    try {
-      await this.lineWorkingCol.insertMany(alerts, { ordered: false });
       return true;
     } catch (e: any) {
-      if (e.code === 11000) return true; // Игнорируем дубликаты
-      logger.error(`Не удалось добавить массив Line Alerts: ${e.message}`, e);
+      logger.error(`Ошибка добавления (${type}/${status}): ${e.message}`, e);
       return false;
     }
   }
 
-  async removeWorkingLineAlert(id: string): Promise<boolean> {
+  async addAlertsBatch(
+    type: AlertType,
+    status: AlertStatus,
+    alerts: any[]
+  ): Promise<boolean> {
+    if (!alerts.length) return true;
     try {
-      const result = await this.lineWorkingCol.deleteOne({ id: id });
-      return result.deletedCount > 0;
-    } catch (e: any) {
-      logger.error(`Не удалось удалить Line Alert (id=${id}): ${e.message}`, e);
-      return false;
-    }
-  }
-
-  async removeWorkingLineAlertsByIds(ids: string[]): Promise<number> {
-    if (!ids || ids.length === 0) return 0;
-    try {
-      const result = await this.lineWorkingCol.deleteMany({ id: { $in: ids } });
-      return result.deletedCount;
-    } catch (e: any) {
-      logger.error(`Не удалось удалить массив Line Alerts: ${e.message}`, e);
-      return 0;
-    }
-  }
-
-  async removeAllWorkingLineAlerts(): Promise<number> {
-    try {
-      const result = await this.lineWorkingCol.deleteMany({});
-      return result.deletedCount;
-    } catch (e: any) {
-      logger.error(`Не удалось очистить working-line-alerts: ${e.message}`, e);
-      return 0;
-    }
-  }
-
-  // --- VWAP Alerts (CRUD) ---
-
-  async getWorkingVwapAlerts(): Promise<VwapAlert[]> {
-    return await this.vwapWorkingCol.find().toArray();
-  }
-
-  async addWorkingVwapAlert(alert: VwapAlert): Promise<boolean> {
-    try {
-      if (!alert.id) throw new Error("Alert 'id' (UUID) is required.");
-
-      const existing = await this.vwapWorkingCol.findOne({ id: alert.id });
-      if (existing) {
-        logger.warn(
-          `[AlertStorage] VWAP Alert (id=${alert.id}) уже существует.`,
-          DColors.yellow
-        );
-        return false;
-      }
-      await this.vwapWorkingCol.insertOne(alert);
-      return true;
-    } catch (e: any) {
-      logger.error(
-        `Не удалось добавить VWAP Alert (id=${alert.id}): ${e.message}`,
-        e
+      const col = this._getCollection(type, status);
+      await col.insertMany(alerts, { ordered: false });
+      logger.success(
+        `Пакетное добавление: ${alerts.length} шт. в (${type}/${status})`,
+        DColors.green
       );
-      return false;
-    }
-  }
-
-  async addWorkingVwapAlerts(alerts: VwapAlert[]): Promise<boolean> {
-    if (!alerts || alerts.length === 0) return true;
-    try {
-      await this.vwapWorkingCol.insertMany(alerts, { ordered: false });
       return true;
     } catch (e: any) {
       if (e.code === 11000) return true;
-      logger.error(`Не удалось добавить массив VWAP Alerts: ${e.message}`, e);
+      logger.error(
+        `Ошибка пакетного добавления (${type}/${status}): ${e.message}`,
+        e
+      );
       return false;
     }
   }
 
-  async removeWorkingVwapAlert(id: string): Promise<boolean> {
+  async deleteAlert(
+    type: AlertType,
+    status: AlertStatus,
+    id: string
+  ): Promise<boolean> {
     try {
-      const result = await this.vwapWorkingCol.deleteOne({ id: id });
-      return result.deletedCount > 0;
+      const col = this._getCollection(type, status);
+      const res = await col.deleteOne({ id });
+      return res.deletedCount > 0;
     } catch (e: any) {
-      logger.error(`Не удалось удалить VWAP Alert (id=${id}): ${e.message}`, e);
+      logger.error(`Ошибка удаления (${type}/${status}): ${e.message}`, e);
       return false;
     }
   }
 
-  async removeWorkingVwapAlertsByIds(ids: string[]): Promise<number> {
-    if (!ids || ids.length === 0) return 0;
+  async deleteAlertsBatch(
+    type: AlertType,
+    status: AlertStatus,
+    ids: string[]
+  ): Promise<number> {
     try {
-      const result = await this.vwapWorkingCol.deleteMany({ id: { $in: ids } });
-      return result.deletedCount;
-    } catch (e: any) {
-      logger.error(`Не удалось удалить массив VWAP Alerts: ${e.message}`, e);
-      return 0;
-    }
-  }
-
-  async removeAllWorkingVwapAlerts(): Promise<number> {
-    try {
-      const result = await this.vwapWorkingCol.deleteMany({});
-      return result.deletedCount;
-    } catch (e: any) {
-      logger.error(`Не удалось очистить working-vwap-alerts: ${e.message}`, e);
-      return 0;
-    }
-  }
-  // --- 🚀 КОНЕЦ: API CRUD ---
-
-  // --- 🚀 НАЧАЛО: МЕТОДЫ ДЛЯ ТЕСТИРОВАНИЯ (Triggered) ---
-  // (Этот код из вашего файла остается БЕЗ ИЗМЕНЕНИЙ)
-
-  async getTriggeredLineAlerts(): Promise<LineAlert[]> {
-    return await this.lineTriggeredCol.find().toArray();
-  }
-
-  async removeAllTriggeredLineAlerts(): Promise<number> {
-    try {
-      const result = await this.lineTriggeredCol.deleteMany({});
-      return result.deletedCount;
+      const col = this._getCollection(type, status);
+      const res = await col.deleteMany({ id: { $in: ids } });
+      logger.info(
+        `Пакетное удаление: ${res.deletedCount} из (${type}/${status})`,
+        DColors.gray
+      );
+      return res.deletedCount;
     } catch (e: any) {
       logger.error(
-        `Не удалось очистить triggered-line-alerts: ${e.message}`,
+        `Ошибка пакетного удаления (${type}/${status}): ${e.message}`,
         e
       );
       return 0;
     }
   }
 
-  async getTriggeredVwapAlerts(): Promise<VwapAlert[]> {
-    return await this.vwapTriggeredCol.find().toArray();
-  }
-
-  async removeAllTriggeredVwapAlerts(): Promise<number> {
+  async deleteAllAlerts(type: AlertType, status: AlertStatus): Promise<number> {
     try {
-      const result = await this.vwapTriggeredCol.deleteMany({});
-      return result.deletedCount;
+      const col = this._getCollection(type, status);
+      const res = await col.deleteMany({});
+      return res.deletedCount;
     } catch (e: any) {
       logger.error(
-        `Не удалось очистить triggered-vwap-alerts: ${e.message}`,
+        `Ошибка полной очистки (${type}/${status}): ${e.message}`,
         e
       );
       return 0;
     }
   }
-  // --- 🚀 КОНЕЦ: МЕТОДЫ ДЛЯ ТЕСТИРОВАНИЯ ---
+
+  // ============================================
+  // 🔄 UPDATE (PATCH) - UNIVERSAL
+  // ============================================
+  async updateAlert(
+    type: AlertType,
+    status: AlertStatus,
+    id: string,
+    updateData: any
+  ): Promise<boolean> {
+    try {
+      const col = this._getCollection(type, status);
+
+      // Защита: удаляем системные поля, чтобы не сломать базу
+      const safeData = { ...updateData };
+      delete safeData.id;
+      delete safeData._id;
+
+      const result = await col.updateOne({ id: id }, { $set: safeData });
+
+      return result.modifiedCount > 0;
+    } catch (e: any) {
+      logger.error(
+        `Update error (${type}/${status}, id=${id}): ${e.message}`,
+        e
+      );
+      return false;
+    }
+  }
+  // ============================================
+  // 📦 UNIVERSAL MOVE (SAFE VERSION)
+  // ============================================
+
+  async moveAlerts(
+    type: AlertType,
+    fromStatus: AlertStatus,
+    toStatus: AlertStatus,
+    ids: string[]
+  ): Promise<number> {
+    // 1. Жесткая защита входных данных
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      logger.warn(
+        `MoveAlerts: пустой или неверный массив IDs. Type: ${typeof ids}`,
+        DColors.yellow
+      );
+      return 0;
+    }
+
+    if (fromStatus === toStatus) return 0;
+
+    try {
+      const fromCol = this._getCollection(type, fromStatus);
+      const toCol = this._getCollection(type, toStatus);
+
+      // 2. Поиск документов
+      const docs = await fromCol.find({ id: { $in: ids } } as any).toArray();
+
+      // 3. Защита от undefined результата базы данных
+      if (!docs || docs.length === 0) {
+        return 0;
+      }
+
+      // 4. Очистка _id
+      const docsToInsert = docs.map((doc: any) => {
+        const { _id, ...rest } = doc;
+        return rest;
+      });
+
+      // 5. Вставка
+      await toCol.insertMany(docsToInsert as any);
+
+      // 6. Удаление
+      const deleteResult = await fromCol.deleteMany({
+        id: { $in: ids },
+      } as any);
+
+      const movedCount = deleteResult.deletedCount;
+
+      if (movedCount > 0) {
+        logger.success(
+          `Перемещено ${movedCount} алертов (${type}: ${fromStatus} -> ${toStatus})`,
+          DColors.green
+        );
+      }
+      return movedCount;
+    } catch (e: any) {
+      logger.error(
+        `Ошибка перемещения (${type}: ${fromStatus}->${toStatus}): ${e.message}`,
+        e
+      );
+      throw e;
+    }
+  }
+
+  // ============================================
+  // 📧 HELPERS
+  // ============================================
+  async isEmailAllowed(email: string): Promise<boolean> {
+    if (!email) return false;
+    const doc = await this.allowedEmailsCol.findOne({
+      email: email.toLowerCase().trim(),
+    });
+    return !!doc;
+  }
+
+  // ============================================
+  // 🧹 HOUSEKEEPING (CLEANUP)
+  // ============================================
+
+  /**
+   * Удаляет сработавшие (triggered) алерты, которые старше maxAgeMs
+   */
+  async cleanOldTriggeredAlerts(
+    type: AlertType,
+    maxAgeMs: number
+  ): Promise<number> {
+    try {
+      const col = this._getCollection(type, "triggered");
+
+      // Вычисляем пороговое время: Сейчас минус возраст
+      const cutoffTime = Date.now() - maxAgeMs;
+
+      // Удаляем всё, где activationTime < cutoffTime
+      const res = await col.deleteMany({
+        activationTime: { $lt: cutoffTime },
+      } as any);
+
+      if (res.deletedCount > 0) {
+        logger.info(
+          `[CLEANUP] Удалено ${res.deletedCount} старых алертов из (${type}/triggered)`,
+          DColors.gray
+        );
+      }
+      return res.deletedCount;
+    } catch (e: any) {
+      logger.error(`Ошибка очистки старых алертов (${type}): ${e.message}`, e);
+      return 0;
+    }
+  }
+
+  getLineAlerts(status: AlertStatus, isActive = true) {
+    return this.getAlerts("line", status, isActive);
+  }
+  getVwapAlerts(status: AlertStatus, isActive = true) {
+    return this.getAlerts("vwap", status, isActive);
+  }
+  addLineAlert(status: AlertStatus, alert: any) {
+    return this.addAlert("line", status, alert);
+  }
+  addVwapAlert(status: AlertStatus, alert: any) {
+    return this.addAlert("vwap", status, alert);
+  }
 }

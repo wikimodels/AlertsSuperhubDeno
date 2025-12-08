@@ -1,45 +1,51 @@
-import { CONFIG } from "../config.ts";
+// src/utils/logger.ts
+import { load } from "https://deno.land/std@0.223.0/dotenv/mod.ts";
 import { DColors } from "../models/types.ts";
 
+const env = await load();
+const PROJECT_NAME = env["PROJECT_NAME"] || "Alerts-SuperHub-Deno";
+
 class Logger {
-  private projectName = CONFIG.PROJECT_NAME;
+  private projectName = PROJECT_NAME;
+
+  private formatMsg(message: string): string {
+    return `[${this.projectName}]: ${message}`;
+  }
 
   /**
    * Logs an informational message.
-   * @param message - The message to log.
    */
-  public info(message: string, color: DColors): void {
-    console.log(`%c[${this.projectName}] ${message}`, color);
+  public info(message: string, color: DColors = DColors.white): void {
+    // ЗАЩИТА: Если цвет undefined, используем белый
+    const safeColor = color || "color: white";
+    console.log(`%c${this.formatMsg(message)}`, safeColor);
   }
 
   /**
    * Logs a warning message.
-   * @param message - The message to log.
    */
-  public warn(message: string, color: DColors): void {
-    console.log(`%c[${this.projectName}]:${message}`, color);
-  }
-
-  /**
-   * Logs an error message.
-   * @param message - The error message to log.
-   * @param error - (Optional) The error object to include in the log.
-   */
-  public error(message: string, error?: unknown): void {
-    console.error(`%c[${this.projectName}]:${message}`, `color:${DColors.red}`);
-    if (error) {
-      console.error(`[${this.projectName}]:Error Details:`, error);
-    }
+  public warn(message: string, color: DColors = DColors.yellow): void {
+    const safeColor = color || "color: yellow";
+    console.log(`%c${this.formatMsg(message)}`, safeColor);
   }
 
   /**
    * Logs a success message.
-   * @param message - The message to log.
    */
-  public success(message: string, color: DColors): void {
-    console.log(`%c[${this.projectName}] ${message}`, color);
+  public success(message: string, color: DColors = DColors.green): void {
+    const safeColor = color || "color: green";
+    console.log(`%c${this.formatMsg(message)}`, safeColor);
+  }
+
+  /**
+   * Logs an error message.
+   */
+  public error(message: string, error?: unknown): void {
+    console.error(`%c${this.formatMsg(message)}`, "color: red");
+    if (error) {
+      console.error(error);
+    }
   }
 }
 
-// Export a singleton instance of the Logger
 export const logger = new Logger();

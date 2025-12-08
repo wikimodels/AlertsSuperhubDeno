@@ -11,6 +11,9 @@ export const CONFIG = {
   /**
    * Количество свечей, сохраняемое в кэш.
    */
+  BATCH_SIZE: 2,
+  DELAY_MS: 200,
+
   SAVE_LIMIT: 400,
 
   /**

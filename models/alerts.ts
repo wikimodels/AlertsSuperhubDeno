@@ -2,7 +2,6 @@
 export interface AlertBase {
   symbol: string;
   alertName: string;
-  action: string;
   price: number;
   description?: string;
   tvScreensUrls?: string[];
@@ -18,16 +17,11 @@ export interface AlertBase {
   highPrice?: number;
   lowPrice?: number;
   isActive: boolean;
-
-  // Дополнительные ссылки
-  tvLink?: string;
-  cgLink?: string;
+  imagesUrls?: string[];
 }
 
 // --- Line Alert: наследует всё от AlertBase ---
-export interface LineAlert extends AlertBase {
-  imagesUrls?: string[];
-}
+export interface LineAlert extends AlertBase {}
 
 // --- VWAP Alert: расширяет AlertBase специфичными полями ---
 export interface VwapAlert extends AlertBase {
@@ -35,11 +29,17 @@ export interface VwapAlert extends AlertBase {
   anchorTime?: number; // timestamp в миллисекундах
   anchorTimeStr?: string;
   anchorPrice?: number; // рассчитанный VWAP на момент активации
-  imageUrl?: string;
-
-  // Переопределяем price как опциональное, т.к. оно устанавливается при триггере
-  price: number; // цена срабатывания = anchorPrice
 }
 
 // --- Тип коллекции ---
 export type AlertsCollection = "working" | "triggered" | "archived";
+
+// 🧠 SMART TYPES
+export type AlertType = "line" | "vwap";
+export type AlertStatus = "working" | "archived" | "triggered";
+
+// Хелпер для проверки типов (для бэкенда)
+export const isAlertType = (x: string): x is AlertType =>
+  ["line", "vwap"].includes(x);
+export const isAlertStatus = (x: string): x is AlertStatus =>
+  ["working", "archived", "triggered"].includes(x);
