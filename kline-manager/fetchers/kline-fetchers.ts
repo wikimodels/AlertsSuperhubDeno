@@ -1,64 +1,86 @@
 // deno-lint-ignore-file no-explicit-any
-import {
-  CoinGroups,
-  TF,
-  FetchOptions,
-  FetcherResult,
-  DColors,
-} from "../../models/types.ts";
+// src/fetchers/kline-fetchers.ts
+
+import { load } from "https://deno.land/std@0.223.0/dotenv/mod.ts";
+import { TF, DColors, MarketData } from "../../models/types.ts";
 import { logger } from "../../utils/logger.ts";
-import { fetchKlines } from "../getters/get-kline.ts";
+
+const env = await load();
+const BASE_URL = env["BAZZAR_KLINE_FETCHER_URL"];
+const TOKEN = env["SECRET_TOKEN"];
+
+/**
+ * Интерфейс ответа от Render API
+ * Поле data полностью соответствует нашему интерфейсу MarketData
+ */
+interface KlineApiResponse {
+  success: boolean;
+  data: MarketData;
+  error?: string;
+}
 
 /**
  * Универсальный fetcher для Klines
- * Автоматически разделяет монеты по биржам и делает параллельные запросы
+ * Возвращает готовый MarketData (snapshot) с сервера или null в случае ошибки.
  */
 export async function fetchKlineData(
-  coinGroups: CoinGroups,
-  timeframe: TF,
-  limit: number,
-  options?: FetchOptions
-): Promise<FetcherResult> {
-  const { binanceCoins, bybitCoins } = coinGroups;
+  timeframe: TF
+): Promise<MarketData | null> {
+  // 1. Быстрая проверка
+  if (timeframe !== "1h") {
+    logger.error(
+      `[Kline Fetcher] Only '1h' timeframe is supported. Got: ${timeframe}`,
+      DColors.red
+    );
+    return null;
+  }
+
+  // Запрос без параметров (сервер отдает дефолтный лимит для 1h)
+  const url = `${BASE_URL}/api/cache/${timeframe}`;
+
   logger.info(
-    `[Kline Fetcher] Starting: ${binanceCoins.length} Binance + ${bybitCoins.length} Bybit coins [${timeframe}]`,
+    `[Kline Fetcher] Connecting to Render Service... [${timeframe}]`,
     DColors.cyan
   );
-  const tasks: Promise<any>[] = [];
 
-  // Binance Klines
-  if (binanceCoins.length > 0) {
-    tasks.push(fetchKlines(binanceCoins, "binance", timeframe, limit, options));
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
+  if (TOKEN) {
+    headers["Authorization"] = `Bearer ${TOKEN}`;
+  } else {
+    logger.warn("[Kline Fetcher] SECRET_TOKEN missing in .env", DColors.yellow);
   }
 
-  // Bybit Klines
-  if (bybitCoins.length > 0) {
-    tasks.push(fetchKlines(bybitCoins, "bybit", timeframe, limit, options));
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errText}`);
+    }
+
+    const json: KlineApiResponse = await response.json();
+
+    if (!json.success || !json.data || !Array.isArray(json.data.data)) {
+      throw new Error("Invalid response format from Render API");
+    }
+
+    const marketData = json.data;
+
+    logger.success(
+      `[Kline Fetcher] ✓ Success: Loaded snapshot. Coins: ${
+        marketData.coinsNumber
+      }, UpdatedAt: ${new Date(marketData.updatedAt).toISOString()}`,
+      DColors.green
+    );
+
+    return marketData;
+  } catch (error: any) {
+    logger.error(`[Kline Fetcher] ✗ Critical Error: ${error.message}`, error);
+    return null;
   }
-
-  const results = await Promise.all(tasks);
-
-  // Объединяем результаты
-  const allSuccessful: any[] = [];
-  const allFailed: any[] = [];
-
-  for (const res of results) {
-    allSuccessful.push(...res.successful);
-    allFailed.push(...res.failed);
-  }
-
-  // --- ИСПРАВЛЕНИЕ РЕФАКТОРИНГА ---
-  // allSuccessful.map(...) больше не нужен,
-  // так как allSuccessful уже содержит CoinMarketData[]
-  const failed = allFailed.map((item) => ({
-    symbol: item.symbol,
-    error: item.error,
-  }));
-  // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
-  logger.info(
-    `[Kline Fetcher] ✓ Success: ${allSuccessful.length} | ✗ Failed: ${failed.length}`,
-    allSuccessful.length > 0 ? DColors.green : DColors.yellow
-  );
-  return { successful: allSuccessful, failed }; // <- ИСПРАВЛЕНО
 }

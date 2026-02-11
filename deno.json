@@ -1,6 +1,10 @@
 {
+  "tasks": {
+    "deploy": "deployctl deploy --project=alerts-superhub-deno --env=.env --prod --exclude='**/node_modules' server.ts",
+    "delete": "deployctl projects delete alerts-superhub-deno"
+  },
   "deploy": {
-    "project": "b6e00887-d0f9-44fe-a0c9-00483e1c02dc",
+    "project": "ee3cadd9-f17d-4444-9dfb-264e95dbdf73",
     "exclude": [
       "**/node_modules"
     ],

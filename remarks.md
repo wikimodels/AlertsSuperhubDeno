@@ -35,7 +35,22 @@ deployctl projects delete alerts-superhub-deno
 PAIN IN THE ASS WAS authMechanism=SCRAM-SHA-1!!!
  "mongodb+srv://USERNAME:<PASSWORD>@cluster0.wgp2hmv.mongodb.net/?authMechanism=SCRAM-SHA-1&retryWrites=true&w=majority&appName=Cluster0"
 
- 
+Чтобы использовать access token при деплое на Deno Deploy, нужно авторизовать deployctl через переменную окружения.
+
+📋 Пошагово
+Сгенерируй токен
+
+Зайди в Deno Deploy dashboard → Access Tokens.
+
+Создай новый токен (например, ddp_Di44YyQblDdzaFhjCactE4255ouQyy1Bh0hf).
+
+Экспортируй токен в окружение В терминале (Linux/macOS):
+
+bash
+export DENO_DEPLOY_TOKEN=ddp_Di44YyQblD
+
+bash
+deployctl deploy --project alerts-superhub-deno --entrypoint server.ts
 
 === RENEW PATH FOR POWERSHELL ======
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")

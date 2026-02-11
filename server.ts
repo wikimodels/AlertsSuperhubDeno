@@ -2,6 +2,10 @@ import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { logger } from "./utils/logger.ts";
 import { DColors } from "./models/types.ts";
+import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
+
+// Load environment variables from .env file
+await load({ export: true });
 
 // --- API для CRUD монет ---
 import { coinRoutes } from "./routes/coin-routes.ts";
@@ -38,11 +42,22 @@ async function startServer() {
   logger.info("🚀 ЗАПУСК СЕРВЕРА ALERTS-SUPERHUB", DColors.cyan);
   logger.info("=======================================", DColors.cyan);
 
+
+  // Debug: Load allowed origins from .env
+  const allowedOriginsEnv = Deno.env.get("ALLOWED_ORIGINS");
+  const allowedOrigins = allowedOriginsEnv ? allowedOriginsEnv.split(",") : [];
+
+  logger.info(`[CONFIG] ALLOWED_ORIGINS source: ENV`, allowedOriginsEnv ? DColors.green : DColors.yellow);
+  logger.info(`[CONFIG] Active Origins: ${allowedOrigins.join(", ")}`, DColors.cyan);
+
+  if (allowedOrigins.length === 0) {
+    logger.warn("[CONFIG] WARNING: No allowed origins configured! CORS might block requests.", DColors.yellow);
+  }
+
   // --- Инициализируем и подключаем Mongo 1 РАЗ (Singleton) ---
   const coinStorage = new WorkingCoinStorage();
   // --- 🚀 ИЗМЕНЕНИЕ: Инициализация AlertStorage ---
   const alertStorage = new AlertStorage();
-  // --- 🚀 КОНЕЦ ИЗМЕНЕНИЯ ---
 
   try {
     await coinStorage.connect();
@@ -65,7 +80,7 @@ async function startServer() {
 
   // Настройка CRON Jobs
   logger.info("[CRON] Настройка Cron Job 1h (Alerts)...", DColors.cyan);
-  Deno.cron("Job 1h Alerts", "*/3 * * * *", () => {
+  Deno.cron("Job 1h Alerts", "3 * * * *", () => {
     // "0 * * * *" = в 00 минут каждого часа
     runJob("1h", run1hJob);
   });
@@ -82,33 +97,10 @@ async function startServer() {
     "*",
     cors({
       origin: (origin) => {
-        // В production укажите конкретные домены
-        // Например: ['https://yourdomain.com', 'https://app.yourdomain.com']
-
-        // Для development разрешаем localhost
-        const allowedOrigins = [
-          "http://localhost:4200", // Angular dev server
-          "http://localhost:3000", // Альтернативный порт
-          "http://127.0.0.1:4200",
-          "http://127.0.0.1:3000",
-        ];
-
-        // В production можно добавить продакшн домены
-        if (Deno.env.get("ENVIRONMENT") === "production") {
-          allowedOrigins.push(
-            "https://yourdomain.com",
-            "https://app.yourdomain.com"
-          );
-        }
-
         // Проверяем, разрешен ли origin
         if (allowedOrigins.includes(origin)) {
           return origin;
         }
-
-        // Для разработки можно разрешить все (небезопасно для production!)
-        // Раскомментируйте следующую строку только для development
-        // return origin;
 
         // По умолчанию - первый разрешенный origin
         return allowedOrigins[0];
