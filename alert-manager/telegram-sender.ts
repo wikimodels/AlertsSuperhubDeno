@@ -8,12 +8,15 @@ import { DColors } from "../models/types.ts";
 
 const env = await load();
 const TELEGRAM_API_URL = "https://api.telegram.org/bot{token}/sendMessage";
+const TRIGGERED_SITE_URL = env["TRIGGERED_ALERTS_SITE"] ?? Deno.env.get("TRIGGERED_ALERTS_SITE") ?? "https://alerts-superhub-mobile.web.app";
 
 // --- Хелперы форматирования ---
 
 function _getTradingViewLink(symbol: string, exchanges: string[] = []): string {
+  const suffix = symbol.endsWith(".P") ? "" : ".P";
+
   if (!exchanges || exchanges.length === 0) {
-    return `https://www.tradingview.com/chart/?symbol=${symbol}`;
+    return `https://www.tradingview.com/chart/?symbol=${symbol}${suffix}`;
   }
 
   const priority = ["BYBIT", "BINANCE"];
@@ -25,7 +28,7 @@ function _getTradingViewLink(symbol: string, exchanges: string[] = []): string {
     }
   }
 
-  const tvSymbol = `${bestExchange}:${symbol}`;
+  const tvSymbol = `${bestExchange}:${symbol}${suffix}`;
   return `https://www.tradingview.com/chart/?symbol=${tvSymbol}`;
 }
 
@@ -42,7 +45,7 @@ function _formatReportTime(): string {
     hour12: false,
   };
   const timeStr = new Intl.DateTimeFormat("sv-SE", options).format(dt);
-  return `${timeStr} 🈸🈸🈸`;
+  return `🕒 ${timeStr} <a href="${TRIGGERED_SITE_URL}">🈸🈸</a>`;
 }
 
 function _formatVwapReportTime(): string {
@@ -58,7 +61,7 @@ function _formatVwapReportTime(): string {
     hour12: false,
   };
   const timeStr = new Intl.DateTimeFormat("sv-SE", options).format(dt);
-  return `${timeStr} 🈯️🈯️🈯️`;
+  return `🕒 ${timeStr} <a href="${TRIGGERED_SITE_URL}">🈯️🈯️</a>`;
 }
 
 function _formatCombinedReportTime(): string {
@@ -74,7 +77,7 @@ function _formatCombinedReportTime(): string {
     hour12: false,
   };
   const timeStr = new Intl.DateTimeFormat("sv-SE", options).format(dt);
-  return `${timeStr} 🈸🈯️`;
+  return `🕒 ${timeStr} <a href="${TRIGGERED_SITE_URL}">🈸🈯️</a>`;
 }
 
 // Форматирование времени якоря для VWAP
@@ -172,6 +175,7 @@ export async function sendTriggeredLineAlertsReport(
     msg = `
 <b>✴️ LINE ALERTS (1h)</b>
 ${alertListStr}
+
 ${reportTimeStr}
 `.trim();
   }
@@ -198,9 +202,8 @@ export async function sendTriggeredVwapAlertsReport(
 
       const symbolShort = symbol.replace("USDT", "").replace("PERP", "");
 
-      return `<a href="${tvLink}"><b>${
-        i + 1
-      }. ${symbolShort}/<i>${anchorTimeStr}</i></b></a>`;
+      return `<a href="${tvLink}"><b>${i + 1
+        }. ${symbolShort}/<i>${anchorTimeStr}</i></b></a>`;
     });
     const alertListStr = alertItems.join("\n");
     const reportTimeStr = _formatVwapReportTime();
@@ -208,6 +211,7 @@ export async function sendTriggeredVwapAlertsReport(
     msg = `
 <b>💹 VWAP ALERTS (1h)</b>
 ${alertListStr}
+
 ${reportTimeStr}
 `.trim();
   }
@@ -257,9 +261,8 @@ export async function sendCombinedReport(
       const anchorTimeStr = _formatAnchorTime(rawTime);
 
       const symbolShort = symbol.replace("USDT", "").replace("PERP", "");
-      return `<a href="${tvLink}"><b>${
-        i + 1
-      }. ${symbolShort}/<i>${anchorTimeStr}</i></b></a>`;
+      return `<a href="${tvLink}"><b>${i + 1
+        }. ${symbolShort}/<i>${anchorTimeStr}</i></b></a>`;
     });
     const alertListStr = vwapItems.join("\n");
     messageParts.push(`<b>💹 VWAP ALERTS (1h)</b>\n${alertListStr}`);
