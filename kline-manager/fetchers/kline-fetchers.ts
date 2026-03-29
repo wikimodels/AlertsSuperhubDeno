@@ -56,6 +56,7 @@ export async function fetchKlineData(
     const response = await fetch(url, {
       method: "GET",
       headers,
+      signal: AbortSignal.timeout(10000), // 10 секунд на жесткий таймаут
     });
 
     if (!response.ok) {
